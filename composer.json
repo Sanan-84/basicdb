@@ -1,0 +1,21 @@
+{
+    "name": "sanan-84/basicdb-example",
+    "description": "Example project using the basicdb package",
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Sanan Mammadov",
+            "email": "sanan@webservis.az",
+            "homepage": "http://www.webservis.az"
+        }
+    ],
+    "require": {
+        "sanan-84/basicdb": "dev-master"
+    },
+    "autoload": {
+        "psr-4": {
+            "Sanan_84\\": "src/"
+        }
+    }
+}

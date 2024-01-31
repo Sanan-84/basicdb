@@ -26,7 +26,13 @@ Explain how to use the project.
 
 ```php
 // Example usage code
-use YourNamespace\YourClass;
+require_once __DIR__ . '/vendor/autoload.php';
 
-$obj = new YourClass();
+use App\classes\Database;
+
+// Sınıfı kullanma örneği
+$db = new Database('localhost', 'your_db_name', 'your_username', 'your_password');
+
+// Kullanım örnekleri...
+
 // ...

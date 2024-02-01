@@ -1,19 +1,21 @@
 # BasicDB
-A simple PHP database class for easy interaction with MySQL databases.
 
-Start with a short description of your project.
+A simple PHP database class for easy interaction with MySQL databases.
 
 ## Purpose
 
-Explain the purpose of the project. Specify what problem you are trying to solve and highlight the advantages of your project.
+BasicDB is designed to provide a straightforward and convenient way to interact with MySQL databases using PHP. It aims to simplify database operations and make them more accessible for developers.
 
 ## Features
 
-- List the key features of your project.
+- **Easy Integration**: Simple and easy-to-use methods for common database operations.
+- **Query Building**: Supports building complex SQL queries with ease.
+- **Pagination**: Built-in pagination support for handling large result sets.
+- **Debugging**: Debug mode for viewing generated SQL queries.
 
 ## Installation
 
-Explain how to install the project step by step.
+To get started, follow these steps:
 
 1. Clone the project: `git clone https://github.com/Sanan-84/basicdb.git`
 2. Navigate to the project directory: `cd basicdb`
@@ -22,17 +24,17 @@ Explain how to install the project step by step.
 
 ## Usage
 
-Explain how to use the project.
+Here's an example of how to use BasicDB:
 
 ```php
 // Example usage code
 require_once __DIR__ . '/vendor/autoload.php';
 
-use App\classes\Database;
+use Sanan-84\basicdb\Database;
 
-// Sınıfı kullanma örneği
+// Initialize the database connection
 $db = new Database('localhost', 'your_db_name', 'your_username', 'your_password');
 
-// Kullanım örnekleri...
+// Usage examples...
 
 // ...

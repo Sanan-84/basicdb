@@ -15,8 +15,8 @@ Explain the purpose of the project. Specify what problem you are trying to solve
 
 Explain how to install the project step by step.
 
-1. Clone the project: `git clone https://github.com/your-username/your-repo.git`
-2. Navigate to the project directory: `cd your-repo`
+1. Clone the project: `git clone https://github.com/Sanan-84/basicdb.git`
+2. Navigate to the project directory: `cd basicdb`
 3. Install the required dependencies: `composer install`
 4. Edit configuration files.
 

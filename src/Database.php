@@ -1,5 +1,5 @@
 <?php
-namespace Sanan_84;
+namespace Webservis;
 /**
  * Class BasicDB
  *

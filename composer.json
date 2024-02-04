@@ -2,7 +2,7 @@
     "name": "webservis/basicdb",
     "description": "Example project using the basicdb package",
     "type": "project",
-    "license": "MIT",
+    "license": "GPL-3.0",
     "authors": [
         {
             "name": "Sanan Mammadov",

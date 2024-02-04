@@ -15,7 +15,8 @@
     },
     "autoload": {
         "psr-4": {
-            "Sanan_84\\": "src/"
+            "Sanan-84\\basicdb\\": "src/"
+
         }
     }
 }

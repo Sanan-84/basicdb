@@ -11,7 +11,7 @@
         }
     ],
     "require": {
-        "sanan-84/basicdb": "dev-master"
+        "php": ">=7.4"
     },
     "autoload": {
         "psr-4": {

@@ -30,7 +30,7 @@ Here's an example of how to use BasicDB:
 // Example usage code
 require_once __DIR__ . '/vendor/autoload.php';
 
-use Sanan-84\basicdb\Database;
+use Webservis\Database;
 
 // Initialize the database connection
 $db = new Database('localhost', 'your_db_name', 'your_username', 'your_password');

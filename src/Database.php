@@ -279,7 +279,8 @@ class Database extends \PDO
                             $where = 'FIND_IN_SET(' . $item['value'] . ', ' . $item['column'] . ')';
                             break;
                         case 'IN':
-                            $where = $item['column'] . ' IN (' . (is_array($item['value']) ? implode(', ', $item['value']) : $item['value']) . ')';
+                            //$where = $item['column'] . ' IN (' . (is_array($item['value']) ? implode(', ', $item['value']) : $item['value']) . ')';
+                            $where = $item['column'] . ' IN(' . (is_array($item['value']) ? implode(', ', $item['value']) : $item['value']) . ')';
                             break;
                         case 'NOT IN':
                             $where = $item['column'] . ' NOT IN(' . (is_array($item['value']) ? implode(', ', $item['value']) : $item['value']) . ')';

@@ -444,7 +444,7 @@ class Database extends \PDO
             $this->limit = null;
         }
         $query = $this->query($this->sql)->fetch(parent::FETCH_ASSOC);
-        return $query['total'];
+        return isset( $query['total']) ?  $query['total'] : 0;
     }
 
     public function pagination($totalRecord, $paginationLimit, $pageParamName)

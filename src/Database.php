@@ -86,15 +86,17 @@ class Database extends \PDO
 
     public function where($column, $value = '', $mark = '=', $logical = '&&')
     {
-        $this->where[] = [
-            'column' => $column,
-            'value' => $value,
-            'mark' => $mark,
-            'logical' => $logical,
-            'grouped' => $this->grouped,
-            'group_id' => $this->group_id
-        ];
-        return $this;
+        if($column){
+            $this->where[] = [
+                'column' => $column,
+                'value' => $value,
+                'mark' => $mark,
+                'logical' => $logical,
+                'grouped' => $this->grouped,
+                'group_id' => $this->group_id
+            ];
+            return $this;
+        }
     }
 
     public function having($column, $value = '', $mark = '=', $logical = '&&')

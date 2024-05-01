@@ -646,4 +646,22 @@ class Database extends \PDO
         return $this->query("ALTER TABLE `{$tableName}` AUTO_INCREMENT = {$ai}")->fetch();
     }
 
+    public function setWhereSql($where=array()){
+        if($where){
+            $where_arr = [];
+            foreach ($where as $key => $wh_item) {
+                $wh_item[2] = @$wh_item[2] ?: '=';
+                $wh_item[3] = @$wh_item[3] ?: '&&';
+
+                $sql =   $wh_item[0] . ' ' . $wh_item[2] . '"' . $wh_item[1] . '"';
+                $where_arr[] = ($key === array_key_last($where))
+                    ? $sql
+                    : $sql . ' ' . $wh_item[3];
+
+            }}
+        else{$where_arr = array(['id','-1', '>']);}
+
+        return implode(' ', $where_arr);
+    }
+
 }

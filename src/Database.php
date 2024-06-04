@@ -99,6 +99,22 @@ class Database extends \PDO
         }
     }
 
+    public function wheres($where=array())
+    {
+        foreach ($wheres as $where){
+            /*$this->where[] = [
+                'column' => $where[0],
+                'value' => isset($where[1])? $where[1] : '',
+                'mark' => @$where[2]?: '=',
+                'logical' => $where[3]?: '&&',
+                'grouped' => $this->grouped,
+                'group_id' => $this->group_id
+            ];*/
+            self::where($where[0], @$where[1] ?: '', @$where[2] ?: '=', @$where[3] ?: '&&');
+        }
+        return $this;
+    }
+
     public function having($column, $value = '', $mark = '=', $logical = '&&')
     {
         $this->having[] = [

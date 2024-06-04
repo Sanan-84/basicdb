@@ -101,7 +101,7 @@ class Database extends \PDO
 
     public function wheres($wheres=array())
     {
-        foreach ($wheres as $where){
+        if(is_array($wheres)foreach ($wheres as $where){
             /*$this->where[] = [
                 'column' => $where[0],
                 'value' => isset($where[1])? $where[1] : '',
@@ -111,7 +111,7 @@ class Database extends \PDO
                 'group_id' => $this->group_id
             ];*/
             self::where($where[0], @$where[1] ?: '', @$where[2] ?: '=', @$where[3] ?: '&&');
-        }
+        }}
         return $this;
     }
 

@@ -101,7 +101,7 @@ class Database extends \PDO
 
     public function wheres($wheres=array())
     {
-        if(is_array($wheres)foreach ($wheres as $where){
+        if($wheres){foreach ($wheres as $where){
             /*$this->where[] = [
                 'column' => $where[0],
                 'value' => isset($where[1])? $where[1] : '',

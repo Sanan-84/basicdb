@@ -13,7 +13,7 @@ namespace Webservis;
 class Database extends \PDO
 {
     private $dbName;
-    private $type;Fw
+    private $type;
     private $sql;
     private $unionSql;
     private $tableName;

@@ -112,7 +112,6 @@ class Database extends \PDO
             ];*/
             self::where($where[0], @$where[1] ?: '', @$where[2] ?: '=', @$where[3] ?: '&&');
         }}
-        return $this;
     }
 
     public function having($column, $value = '', $mark = '=', $logical = '&&')

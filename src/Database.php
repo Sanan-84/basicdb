@@ -13,7 +13,7 @@ namespace Webservis;
 class Database extends \PDO
 {
     private $dbName;
-    private $type;
+    private $type;Fw
     private $sql;
     private $unionSql;
     private $tableName;
@@ -99,7 +99,7 @@ class Database extends \PDO
         }
     }
 
-    public function wheres($where=array())
+    public function wheres($wheres=array())
     {
         foreach ($wheres as $where){
             /*$this->where[] = [

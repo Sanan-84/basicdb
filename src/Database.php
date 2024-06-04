@@ -110,7 +110,7 @@ class Database extends \PDO
                 'grouped' => $this->grouped,
                 'group_id' => $this->group_id
             ];*/
-            self::where($where[0], @$where[1] ?: '', @$where[2] ?: '=', @$where[3] ?: '&&');
+            $this->where($where[0], $where[1] ?? '', $where[2] ?? '=', $where[3] ?? '&&');
         }}
     }
 

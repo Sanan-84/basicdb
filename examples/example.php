@@ -11,7 +11,7 @@ $username = 'your_username';
 $password = 'your_password';
 
 // Create an instance using the Database class
-$db = new Database($host, $dbname, $username, $password);
+$db = new Database($host, $dbname, $username, $password, 'utf8', true);
 
 // Example of retrieving data from the database
 $users = $db->from('users')
@@ -40,6 +40,7 @@ if ($insertResult) {
     echo "An error occurred while adding the user.";
 }
 
+$db->update('users')->set(['name' => 'Ali'], 'Ali');
 // You can perform more operations...
 
 ?>

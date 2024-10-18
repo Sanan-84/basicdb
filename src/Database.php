@@ -36,6 +36,7 @@ class Database extends \PDO
         'NOW()'
     ];
     private $autolog = false;
+    priveate $autolog_tableName = false;
 
 
     public function __construct($host, $dbname, $username, $password, $charset = 'utf8', $autolog = false)
@@ -358,6 +359,7 @@ class Database extends \PDO
     public function insert($tableName)
     {
         $this->sql = 'INSERT INTO ' . $tableName;
+        $this->autolog_tableName = $tableName;
         return $this;
     }
 

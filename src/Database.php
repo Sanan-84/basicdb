@@ -698,7 +698,7 @@ class Database extends \PDO
     private function logAction($table, $type, $content)
     {
         if ($this->autolog) {
-            $stmt = $this->prepare("INSERT INTO logs (`table`, `type`, `content`, `created_at`) VALUES (:table, :type, :content, NOW())");
+            $stmt = $this->prepare("INSERT INTO logs (`table_name`, `type`, `content`, `created_at`) VALUES (:table, :type, :content, NOW())");
             $stmt->execute([
                 ':table' => $table,
                 ':type' => $type,
@@ -706,13 +706,14 @@ class Database extends \PDO
             ]);
         }
     }
+
     private function createLogTable()
     {
         $createTableSql = "
             CREATE TABLE IF NOT EXISTS logs (
                 id INT(11) AUTO_INCREMENT PRIMARY KEY,
-                table VARCHAR(255),
-                type ENUM('INSERT', 'UPDATE', 'DELETE') NOT NULL,
+                table_name VARCHAR(255),
+                type VARCHAR(50) NOT NULL,
                 content TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

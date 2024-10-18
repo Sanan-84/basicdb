@@ -36,7 +36,8 @@ class Database extends \PDO
         'NOW()'
     ];
     private $autolog = false;
-    priveate $autolog_tableName = false;
+    private $autolog_type = null;
+    private $autolog_tableName = null;
 
 
     public function __construct($host, $dbname, $username, $password, $charset = 'utf8', $autolog = false)
@@ -44,11 +45,13 @@ class Database extends \PDO
         try {
             parent::__construct('mysql:host=' . $host . ';dbname=' . $dbname, $username, $password);
             $this->dbName = $dbname;
+            $this->autolog = $autolog; 
             $this->query('SET CHARACTER SET ' . $charset);
             $this->query('SET NAMES ' . $charset);
             $this->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
             $this->setAttribute(\PDO::ATTR_EMULATE_PREPARES, false);
-            $this->autolog = $autolog; 
+            
+            $this->createLogTable();
         } catch (PDOException $e) {
             $this->showError($e);
         }
@@ -360,6 +363,7 @@ class Database extends \PDO
     {
         $this->sql = 'INSERT INTO ' . $tableName;
         $this->autolog_tableName = $tableName;
+        $this->autolog_type = 'insert';
         return $this;
     }
 
@@ -390,6 +394,9 @@ class Database extends \PDO
             $this->get_where('having');
             $query = $this->prepare($this->sql);
             $result = $query->execute($executeValue);
+
+            $this->logAction($this->tableName, $this->autolog_type, $data);
+
             return $result;
         } catch (PDOException $e) {
             $this->showError($e);
@@ -424,12 +431,16 @@ class Database extends \PDO
     public function update($tableName)
     {
         $this->sql = 'UPDATE ' . $tableName;
+        $this->autolog_tableName = $tableName;
+        $this->autolog_type = 'update';
         return $this;
     }
 
     public function delete($tableName)
     {
         $this->sql = 'DELETE FROM ' . $tableName;
+        $this->autolog_tableName = $tableName;
+        $this->autolog_type = 'delete';
         return $this;
     }
 
@@ -439,6 +450,7 @@ class Database extends \PDO
             $this->get_where('where');
             $this->get_where('having');
             $query = $this->exec($this->sql);
+            $this->logAction($this->tableName, 'delete', ['sql' => $this->sql]);
             return $query;
         } catch (PDOException $e) {
             $this->showError($e);
@@ -686,13 +698,27 @@ class Database extends \PDO
     private function logAction($table, $type, $content)
     {
         if ($this->autolog) {
-            $stmt = $this->prepare("INSERT INTO logs (table, type, content, created_at) VALUES (:table, :type, :content, NOW())");
+            $stmt = $this->prepare("INSERT INTO logs (`table`, `type`, `content`, `created_at`) VALUES (:table, :type, :content, NOW())");
             $stmt->execute([
                 ':table' => $table,
                 ':type' => $type,
-                ':content' => json_encode($content) // Store data as JSON
+                ':content' => json_encode($content)
             ]);
         }
+    }
+    private function createLogTable()
+    {
+        $createTableSql = "
+            CREATE TABLE IF NOT EXISTS logs (
+                id INT(11) AUTO_INCREMENT PRIMARY KEY,
+                table_name VARCHAR(255),
+                action_type ENUM('INSERT', 'UPDATE', 'DELETE') NOT NULL,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+        ";
+
+        $this->exec($createTableSql);
     }
 
 

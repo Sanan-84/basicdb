@@ -35,8 +35,10 @@ class Database extends \PDO
     public $reference = [
         'NOW()'
     ];
+    private $autolog = false;
 
-    public function __construct($host, $dbname, $username, $password, $charset = 'utf8')
+
+    public function __construct($host, $dbname, $username, $password, $charset = 'utf8', $autolog = false)
     {
         try {
             parent::__construct('mysql:host=' . $host . ';dbname=' . $dbname, $username, $password);
@@ -45,6 +47,7 @@ class Database extends \PDO
             $this->query('SET NAMES ' . $charset);
             $this->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
             $this->setAttribute(\PDO::ATTR_EMULATE_PREPARES, false);
+            $this->autolog = $autolog; 
         } catch (PDOException $e) {
             $this->showError($e);
         }
@@ -678,5 +681,17 @@ class Database extends \PDO
 
         return implode(' ', $where_arr);
     }
+    private function logAction($table, $type, $content)
+    {
+        if ($this->autolog) {
+            $stmt = $this->prepare("INSERT INTO logs (table, type, content, created_at) VALUES (:table, :type, :content, NOW())");
+            $stmt->execute([
+                ':table' => $table,
+                ':type' => $type,
+                ':content' => json_encode($content) // Store data as JSON
+            ]);
+        }
+    }
+
 
 }

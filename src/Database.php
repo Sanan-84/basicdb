@@ -711,8 +711,8 @@ class Database extends \PDO
         $createTableSql = "
             CREATE TABLE IF NOT EXISTS logs (
                 id INT(11) AUTO_INCREMENT PRIMARY KEY,
-                table_name VARCHAR(255),
-                action_type ENUM('INSERT', 'UPDATE', 'DELETE') NOT NULL,
+                table VARCHAR(255),
+                type ENUM('INSERT', 'UPDATE', 'DELETE') NOT NULL,
                 content TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

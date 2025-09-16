@@ -573,6 +573,60 @@ class Database extends \PDO
         $this->where($column, $value, 'LIKE');
         return $this;
     }
+    public function az_like($table, $column, $value)
+    {
+        // REPLACE zənciri (sənin işləyən forma üzrə, LOWER istifadə etmirik)
+        $replace_chain = "REPLACE(
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            REPLACE(
+                                REPLACE(
+                                    REPLACE({$table}.{$column},
+                                    'ə','e'),
+                                'ö','o'),
+                            'ü','u'),
+                        'ç','c'),
+                    'ş','s'),
+                'ğ','g'),
+            'ı','i'),
+        'Ə','e')";
+    
+        // alias adı (məs. name_norm)
+        $column_norm_alias = "{$column}_norm";
+    
+        // 1) SELECT hissəsinə transliterasiya sütununu əlavə edək
+        if (preg_match('/SELECT\s+(.*?)\s+FROM/is', $this->sql, $matches)) {
+            $current_select_columns = trim($matches[1]);
+    
+            // əgər SELECT * isə, onu "table.*" ilə əvəz etmək daha təhlükəsizdir
+            if ($current_select_columns == '*' || $current_select_columns == "{$this->tableName}.*") {
+                $current_select_columns = "{$table}.*";
+            }
+    
+            // əgər artıq eyni alias mövcuddursa, yenidən əlavə etməyə ehtiyac yoxdur
+            if (stripos($current_select_columns, $column_norm_alias) === false) {
+                $new_select = "SELECT {$current_select_columns}, {$replace_chain} AS {$column_norm_alias} FROM";
+                $this->sql = preg_replace('/SELECT\s+(.*?)\s+FROM/is', $new_select, $this->sql, 1);
+            }
+        } else {
+            // əgər SELECT strukturu tapılmadısa, default şəkildə əlavə edək
+            $this->sql = "SELECT {$table}.*, {$replace_chain} AS {$column_norm_alias} FROM " . $this->tableName;
+        }
+    
+        // 2) WHERE hissəsinə iki variantlı LIKE əlavə edək:
+        //    - original column LIKE '%value%'
+        //    - transliterasiya olunmuş column LIKE '%value%'
+        // Burda custom_where() istifadə edirik ki, raw SQL ifadəsini problemsiz əlavə etsin.
+        $value_escaped = $value; // hazırda plain value - təhlükəsizlik sonrası dəyişdirəcəyik
+        $where_sql = "({$table}.{$column} LIKE '%{$value_escaped}%' OR {$replace_chain} LIKE '%{$value_escaped}%')";
+    
+        // custom_where metodu içində where(..., 'CUSTOM') çağırır, yəni get_where-də CUSTOM olaraq işlənəcək
+        $this->custom_where($where_sql);
+    
+        return $this;
+    }
 
     public function notLike($column, $value)
     {

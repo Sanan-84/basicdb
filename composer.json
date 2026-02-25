@@ -1,7 +1,7 @@
 {
     "name": "webservis/basicdb",
     "description": "Example project using the basicdb package",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "keywords": ["pdo", "mysql","sql"],
     "type": "project",
     "license": "GPL-3.0",

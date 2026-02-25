@@ -452,7 +452,7 @@ class Database extends \PDO
                 } else {
                     $setClauses = [];
                     foreach ($this->setData as $column => $value) {
-                        if (is_string($value) && preg_match('/^([+-])\s*(\d+)$/', trim($value), $matches)) {
+                        if (is_string($value) && preg_match('/^([+-])\s*([0-9.]+)$/', trim($value), $matches)) {
                             $setClauses[] = $column . ' = ' . $column . ' ' . $matches[1] . ' ' . $matches[2];
                         } else {
                             $setClauses[] = $column . ' = ?';

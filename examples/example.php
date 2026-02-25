@@ -2,7 +2,7 @@
 
 require_once __DIR__ . '/vendor/autoload.php';
 
-use Sanan_84\basicdb\Database;
+use Webservis\Database;
 
 // Database connection information
 $host = 'localhost';

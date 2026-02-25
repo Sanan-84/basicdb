@@ -38,6 +38,8 @@ class Database extends \PDO
     private $autolog = false;
     private $autolog_type = null;
     private $autolog_tableName = null;
+    private $bindings = [];
+    private $setData = [];
 
 
     public function __construct($host, $dbname, $username, $password, $charset = 'utf8', $autolog = false)
@@ -65,12 +67,14 @@ class Database extends \PDO
     {
         $this->sql = 'SELECT * FROM ' . $tableName;
         $this->tableName = $tableName;
+        $this->bindings = [];
+        $this->setData = [];
         return $this;
     }
 
     public function select($columns)
     {
-        $this->sql = str_replace(' * ', ' ' . $columns . ' ', $this->sql);
+        $this->sql = preg_replace('/SELECT(.*?)FROM/is', 'SELECT ' . $columns . ' FROM', $this->sql);
         return $this;
     }
 
@@ -91,7 +95,7 @@ class Database extends \PDO
         return $this;
     }
 
-    public function where($column, $value = '', $mark = '=', $logical = '&&')
+    public function where($column, $value = '', $mark = '=', $logical = 'AND')
     {
         if($column){
             $this->where[] = [
@@ -102,26 +106,21 @@ class Database extends \PDO
                 'grouped' => $this->grouped,
                 'group_id' => $this->group_id
             ];
-            return $this;
         }
+        return $this;
     }
 
-    public function wheres($wheres=array())
+    public function wheres($wheres = [])
     {
-        if($wheres){foreach ($wheres as $where){
-            /*$this->where[] = [
-                'column' => $where[0],
-                'value' => isset($where[1])? $where[1] : '',
-                'mark' => @$where[2]?: '=',
-                'logical' => $where[3]?: '&&',
-                'grouped' => $this->grouped,
-                'group_id' => $this->group_id
-            ];*/
-            $this->where($where[0], $where[1] ?? '', $where[2] ?? '=', $where[3] ?? '&&');
-        }}
+        if ($wheres) {
+            foreach ($wheres as $where) {
+                $this->where($where[0], $where[1] ?? '', $where[2] ?? '=', $where[3] ?? 'AND');
+            }
+        }
+        return $this;
     }
 
-    public function having($column, $value = '', $mark = '=', $logical = '&&')
+    public function having($column, $value = '', $mark = '=', $logical = 'AND')
     {
         $this->having[] = [
             'column' => $column,
@@ -136,22 +135,22 @@ class Database extends \PDO
 
     public function or_where($column, $value, $mark = '=')
     {
-        $this->where($column, $value, $mark, '||');
+        $this->where($column, $value, $mark, 'OR');
         return $this;
     }
 
     public function or_having($column, $value, $mark = '=')
     {
-        $this->having($column, $value, $mark, '||');
+        $this->having($column, $value, $mark, 'OR');
         return $this;
     }
 
-    public function status($value='',$mark='=',$logical='&&'){
+    public function status($value='',$mark='=',$logical='AND'){
         $this->where('status',$value,$mark,$logical);
         return $this;
     }
 
-    public function id($value='',$mark='=',$logical='&&'){
+    public function id($value='',$mark='=',$logical='AND'){
         $this->where('id',$value,$mark,$logical);
         return $this;
     }
@@ -255,11 +254,13 @@ class Database extends \PDO
             echo $this->getSqlString();
         }
         $this->type = '';
-        $query = $this->query($this->sql);
+        $query = $this->prepare($this->sql);
+        $query->execute($this->bindings);
+        $this->bindings = [];
         return $query;
     }
 
-    private function get_where($conditionType = 'where')
+    protected function get_where($conditionType = 'where')
     {
         if (
             (is_array($this->{$conditionType}) && count($this->{$conditionType}) > 0)
@@ -285,38 +286,62 @@ class Database extends \PDO
                     }
                     switch ($item['mark']) {
                         case 'LIKE':
-                            $where = $item['column'] . ' LIKE "%' . $item['value'] . '%"';
+                            $where = $item['column'] . ' LIKE ?';
+                            $this->bindings[] = '%' . $item['value'] . '%';
                             break;
                         case 'NOT LIKE':
-                            $where = $item['column'] . ' NOT LIKE "%' . $item['value'] . '%"';
+                            $where = $item['column'] . ' NOT LIKE ?';
+                            $this->bindings[] = '%' . $item['value'] . '%';
                             break;
                         case 'BETWEEN':
-                            $where = $item['column'] . ' BETWEEN "' . $item['value'][0] . '" AND "' . $item['value'][1] . '"';
+                            $where = $item['column'] . ' BETWEEN ? AND ?';
+                            $this->bindings[] = $item['value'][0];
+                            $this->bindings[] = $item['value'][1];
                             break;
                         case 'NOT BETWEEN':
-                            $where = $item['column'] . ' NOT BETWEEN "' . $item['value'][0] . '" AND "' . $item['value'][1] . '"';
+                            $where = $item['column'] . ' NOT BETWEEN ? AND ?';
+                            $this->bindings[] = $item['value'][0];
+                            $this->bindings[] = $item['value'][1];
                             break;
                         case 'FIND_IN_SET':
-                            $where = 'FIND_IN_SET(' . $item['column'] . ', ' . $item['value'] . ')';
+                            $where = 'FIND_IN_SET(' . $item['column'] . ', ?)';
+                            $this->bindings[] = $item['value'];
                             break;
                         case 'FIND_IN_SET_REVERSE':
-                            $where = 'FIND_IN_SET(' . $item['value'] . ', ' . $item['column'] . ')';
+                            $where = 'FIND_IN_SET(?, ' . $item['column'] . ')';
+                            $this->bindings[] = $item['value'];
                             break;
                         case 'IN':
-                            //$where = $item['column'] . ' IN (' . (is_array($item['value']) ? implode(', ', $item['value']) : $item['value']) . ')';
-                            $where = $item['column'] . ' IN(' . (is_array($item['value']) ? implode(', ', $item['value']) : $item['value']) . ')';
+                            $values = is_array($item['value']) ? $item['value'] : explode(',', $item['value']);
+                            $placeholders = implode(',', array_fill(0, count($values), '?'));
+                            $where = $item['column'] . ' IN(' . $placeholders . ')';
+                            foreach ($values as $v) $this->bindings[] = trim($v);
                             break;
                         case 'NOT IN':
-                            $where = $item['column'] . ' NOT IN(' . (is_array($item['value']) ? implode(', ', $item['value']) : $item['value']) . ')';
+                            $values = is_array($item['value']) ? $item['value'] : explode(',', $item['value']);
+                            $placeholders = implode(',', array_fill(0, count($values), '?'));
+                            $where = $item['column'] . ' NOT IN(' . $placeholders . ')';
+                            foreach ($values as $v) $this->bindings[] = trim($v);
                             break;
                         case 'SOUNDEX':
-                            $where = 'SOUNDEX(' . $item['column'] . ') LIKE CONCAT(\'%\', TRIM(TRAILING \'0\' FROM SOUNDEX(\'' . $item['value'] . '\')), \'%\')';
+                            $where = 'SOUNDEX(' . $item['column'] . ') LIKE CONCAT(\'%\', TRIM(TRAILING \'0\' FROM SOUNDEX(?)), \'%\')';
+                            $this->bindings[] = $item['value'];
                             break;
                         case 'CUSTOM':
                             $where = $item['column'];
+                            if (is_array($item['value'])) {
+                                foreach ($item['value'] as $v) $this->bindings[] = $v;
+                            } elseif ($item['value'] !== 1 && $item['value'] !== '') {
+                                $this->bindings[] = $item['value'];
+                            }
                             break;
                         default:
-                            $where = $item['column'] . ' ' . $item['mark'] . ' ' . (preg_grep('/' . trim($item['value']) . '/i', $this->reference) ? $item['value'] : '"' . $item['value'] . '"');
+                            if (preg_grep('/' . trim($item['value'] ?? '') . '/i', $this->reference)) {
+                                $where = $item['column'] . ' ' . $item['mark'] . ' ' . $item['value'];
+                            } else {
+                                $where = $item['column'] . ' ' . $item['mark'] . ' ?';
+                                $this->bindings[] = $item['value'];
+                            }
                             break;
                     }
                     if ($key == 0) {
@@ -349,10 +374,9 @@ class Database extends \PDO
                     }
                 }
             }
-            $whereClause = rtrim($whereClause, '||');
-            $whereClause = rtrim($whereClause, '&&');
-            $whereClause = preg_replace('/\(\s+(\|\||&&)/', '(', $whereClause);
-            $whereClause = preg_replace('/(\|\||&&)\s+\)/', ')', $whereClause);
+            $whereClause = preg_replace('/\s+(OR|AND)\s*$/i', '', $whereClause);
+            $whereClause = preg_replace('/\(\s+(OR|AND)/i', '(', $whereClause);
+            $whereClause = preg_replace('/(OR|AND)\s+\)/i', ')', $whereClause);
             $this->sql .= $whereClause;
             $this->unionSql .= $whereClause;
             $this->{$conditionType} = null;
@@ -362,65 +386,29 @@ class Database extends \PDO
     public function insert($tableName)
     {
         $this->sql = 'INSERT INTO ' . $tableName;
+        $this->tableName = $tableName;
         $this->autolog_tableName = $tableName;
         $this->autolog_type = 'insert';
+        $this->bindings = [];
+        $this->setData = [];
         return $this;
     }
 
     public function set($data, $value = null)
     {
-        try {
-            if ($value) {
-                if (strstr($value, '+')) {
-                    $this->sql .= ' SET ' . $data . ' = ' . $data . ' ' . $value;
-                    $executeValue = null;
-                } elseif (strstr($value, '-')) {
-                    $this->sql .= ' SET ' . $data . ' = ' . $data . ' ' . $value;
-                    $executeValue = null;
-                } else {
-                    $this->sql .= ' SET ' . $data . ' = :' . $data . '';
-                    $executeValue = [
-                        $data => $value
-                    ];
-                }
-            } else {
-
-                $this->sql .= ' SET ' . implode(', ', array_map(function ($item) {
-                        return $item . ' = :' . $item;
-                    }, array_keys($data)));
-                $executeValue = $data;
+        if (is_array($data)) {
+            foreach ($data as $key => $val) {
+                $this->setData[$key] = $val;
             }
-            $this->get_where('where');
-            $this->get_where('having');
-            $query = $this->prepare($this->sql);
-            $result = $query->execute($executeValue);
-
-            $this->logAction($this->tableName, $this->autolog_type, $data);
-
-            return $result;
-        } catch (PDOException $e) {
-            $this->showError($e);
+        } else {
+            $this->setData[$data] = $value;
         }
+        return $this;
     }
 
     public function incrementDecrement($column, $value = '+ 1')
     {
-        try {
-            $this->sql .= ' SET ' . $column . ' = ' . $column . ' ' . $value;
-            $executeValue = null;
-            /*$executeValue = [
-                $column => abs($value) // Ensure the value is positive
-            ];*/
-
-            $this->get_where('where');
-            $this->get_where('having');
-            $query = $this->prepare($this->sql);
-            $result = $query->execute($executeValue);
-
-            return $result;
-        } catch (PDOException $e) {
-            $this->showError($e);
-        }
+        return $this->set($column, $value);
     }
 
     public function lastId()
@@ -431,27 +419,57 @@ class Database extends \PDO
     public function update($tableName)
     {
         $this->sql = 'UPDATE ' . $tableName;
+        $this->tableName = $tableName;
         $this->autolog_tableName = $tableName;
         $this->autolog_type = 'update';
+        $this->bindings = [];
+        $this->setData = [];
         return $this;
     }
 
     public function delete($tableName)
     {
         $this->sql = 'DELETE FROM ' . $tableName;
+        $this->tableName = $tableName;
         $this->autolog_tableName = $tableName;
         $this->autolog_type = 'delete';
+        $this->bindings = [];
+        $this->setData = [];
         return $this;
     }
 
     public function done()
     {
         try {
+            if ($this->setData) {
+                if (stripos($this->sql, 'INSERT INTO') === 0) {
+                    $columns = implode(', ', array_keys($this->setData));
+                    $placeholders = implode(', ', array_fill(0, count($this->setData), '?'));
+                    $this->sql .= " ($columns) VALUES ($placeholders)";
+                    foreach ($this->setData as $value) {
+                        $this->bindings[] = $value;
+                    }
+                } else {
+                    $setClauses = [];
+                    foreach ($this->setData as $column => $value) {
+                        if (is_string($value) && preg_match('/^([+-])\s*(\d+)$/', trim($value), $matches)) {
+                            $setClauses[] = $column . ' = ' . $column . ' ' . $matches[1] . ' ' . $matches[2];
+                        } else {
+                            $setClauses[] = $column . ' = ?';
+                            $this->bindings[] = $value;
+                        }
+                    }
+                    $this->sql .= ' SET ' . implode(', ', $setClauses);
+                }
+            }
             $this->get_where('where');
             $this->get_where('having');
-            $query = $this->exec($this->sql);
-            $this->logAction($this->tableName, 'delete', ['sql' => $this->sql]);
-            return $query;
+            $query = $this->prepare($this->sql);
+            $result = $query->execute($this->bindings);
+            $this->logAction($this->tableName, $this->autolog_type ?: 'query', $this->setData ?: ['sql' => $this->sql]);
+            $this->bindings = [];
+            $this->setData = [];
+            return $result;
         } catch (PDOException $e) {
             $this->showError($e);
         }
@@ -459,40 +477,18 @@ class Database extends \PDO
 
     public function total()
     {
-        if ($this->join) {
-            $this->sql .= implode(' ', $this->join);
-            $this->join = null;
-        }
-        $this->get_where('where');
-        if ($this->groupBy) {
-            $this->sql .= $this->groupBy;
-            $this->groupBy = null;
-        }
-        $this->get_where('having');
-        if ($this->orderBy) {
-            $this->sql .= $this->orderBy;
-            $this->orderBy = null;
-        }
-        if ($this->limit) {
-            $this->sql .= $this->limit;
-            $this->limit = null;
-        }
-        $query = $this->query($this->sql)->fetch(parent::FETCH_ASSOC);
-        return isset( $query['total']) ?  $query['total'] : 0;
+        $query = $this->generateQuery()->fetch(parent::FETCH_ASSOC);
+        return isset($query['total']) ? $query['total'] : 0;
     }
 
     public function count()
     {
-        $countColumn = 'COUNT(' . $this->tableName . '.id) as total';
-        $this->select($countColumn);
-
-        return $this->total();
+        return $this->select('COUNT(*) as total')->total();
     }
     public function pagination($totalRecord, $paginationLimit, $pageParamName)
     {
         $this->paginationLimit = $paginationLimit;
-        // $this->page = isset($_GET[$pageParamName]) && is_numeric($_GET[$pageParamName]) ? $_GET[$pageParamName] : 1;
-        $this->page = $pageParamName;
+        $this->page = isset($_GET[$pageParamName]) && is_numeric($_GET[$pageParamName]) ? (int)$_GET[$pageParamName] : (is_numeric($pageParamName) ? (int)$pageParamName : 1);
         $this->totalRecord = $totalRecord;
         $this->pageCount = ceil($this->totalRecord / $this->paginationLimit);
         $start = ($this->page * $this->paginationLimit) - $this->paginationLimit;
@@ -623,14 +619,12 @@ class Database extends \PDO
         }
     
         // 2) WHERE hissəsinə iki variantlı LIKE əlavə edək:
-        //    - original column LIKE '%value%'
-        //    - transliterasiya olunmuş column LIKE '%value%'
-        // Burda custom_where() istifadə edirik ki, raw SQL ifadəsini problemsiz əlavə etsin.
-        $value_escaped = $value; // hazırda plain value - təhlükəsizlik sonrası dəyişdirəcəyik
-        $where_sql = "({$table}.{$column} LIKE '%{$value_escaped}%' OR {$replace_chain} LIKE '%{$value_escaped}%')";
+        //    - original column LIKE ?
+        //    - transliterasiya olunmuş column LIKE ?
+        $where_sql = "({$table}.{$column} LIKE ? OR {$replace_chain} LIKE ?)";
     
         // custom_where metodu içində where(..., 'CUSTOM') çağırır, yəni get_where-də CUSTOM olaraq işlənəcək
-        $this->custom_where($where_sql);
+        $this->custom_where($where_sql, ['%' . $value . '%', '%' . $value . '%']);
     
         return $this;
     }
@@ -657,12 +651,12 @@ class Database extends \PDO
         die($name . '  metodu ' . __CLASS__ . ' sınıfı içinde bulunamadı.');
     }
 
-    private function showError(PDOException $error)
+    protected function showError(PDOException $error)
     {
         $this->errorTemplate($error->getMessage());
     }
 
-    private function errorTemplate($errorMsg, $title = null)
+    protected function errorTemplate($errorMsg, $title = null)
     {
         ?>
         <div class="db-error-msg-content">
@@ -744,7 +738,7 @@ class Database extends \PDO
             $where_arr = [];
             foreach ($where as $key => $wh_item) {
                 $wh_item[2] = @$wh_item[2] ?: '=';
-                $wh_item[3] = @$wh_item[3] ?: '&&';
+                $wh_item[3] = @$wh_item[3] ?: 'AND';
 
                 $sql =   $wh_item[0] . ' ' . $wh_item[2] . '"' . $wh_item[1] . '"';
                 $where_arr[] = ($key === array_key_last($where))
@@ -756,7 +750,7 @@ class Database extends \PDO
 
         return implode(' ', $where_arr);
     }
-    private function logAction($table, $type, $content)
+    protected function logAction($table, $type, $content)
     {
         if ($this->autolog) {
             $stmt = $this->prepare("INSERT INTO logs (`table_name`, `type`, `content`, `created_at`) VALUES (:table, :type, :content, NOW())");
@@ -768,7 +762,7 @@ class Database extends \PDO
         }
     }
 
-    private function createLogTable()
+    protected function createLogTable()
     {
         $createTableSql = "
             CREATE TABLE IF NOT EXISTS logs (

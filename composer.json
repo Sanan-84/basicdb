@@ -1,0 +1,23 @@
+{
+    "name": "webservis/basicdb",
+    "description": "Example project using the basicdb package",
+    "version": "2.1.0",
+    "keywords": ["pdo", "mysql","sql"],
+    "type": "project",
+    "license": "GPL-3.0",
+    "authors": [
+        {
+            "name": "Sanan Mammadov",
+            "email": "sanan@webservis.az",
+            "homepage": "http://www.webservis.az"
+        }
+    ],
+    "require": {
+        "php": ">=8.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Webservis\\": "src/"
+        }
+    }
+}

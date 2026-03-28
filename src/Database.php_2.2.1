@@ -1,0 +1,1102 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Webservis;
+
+use PDO;
+use PDOException;
+use PDOStatement;
+use Closure;
+use BadMethodCallException;
+use InvalidArgumentException;
+
+/**
+ * Class Database
+ *
+ * @author Sanan Mammadov
+ * @web    http://www.webservis.az
+ * @mail   sanan@webservis.az
+ * @date   13 April 2017
+ * @update 29 March 2026
+ * @php    8.1+
+ *
+ * Düzəlişlər (v2 → v3):
+ *  - SQL Injection: bütün WHERE/HAVING dəyərləri PDO binding-ə köçürüldü
+ *  - reset() metodu əlavə edildi; from/insert/update/delete onu çağırır
+ *  - set() üçün tip yoxlaması möhkəmləndirildi
+ *  - unionSql null birləşməsi aradan qaldırıldı
+ *  - showError() artıq exception atır (kod davam etmir)
+ *  - count() üçün sütun adı parametri əlavə edildi
+ *  - pagination() mənfi start qorunması əlavə edildi
+ *  - logAction() zamanlaması düzəldildi
+ *  - PHP 8.1 readonly properties
+ */
+class Database extends PDO
+{
+    private readonly string $dbName;
+    private readonly bool   $autolog;
+
+    private ?string $type       = null;
+    private ?string $sql        = null;
+    private ?string $unionSql   = null;
+    private ?string $tableName  = null;
+    private ?array  $where      = null;
+    private ?array  $having     = null;
+    private bool    $grouped    = false;
+    private ?int    $group_id   = null;
+    private ?array  $join       = null;
+    private ?string $orderBy    = null;
+    private ?string $groupBy    = null;
+    private ?string $limit      = null;
+
+    /** @var array<string, mixed> PDO binding */
+    private array $bindings = [];
+
+    // ── Pagination state ─────────────────────────────────────────────────────
+    private ?int    $page            = null;
+    private ?int    $totalRecord     = null;
+    private ?int    $paginationLimit = null;
+    private ?string $html            = null;
+
+    // ── Autolog state ────────────────────────────────────────────────────────
+    private ?string $autolog_type      = null;
+    private ?string $autolog_tableName = null;
+    private ?int    $lastInsertedId    = null;
+
+    // ── Public ───────────────────────────────────────────────────────────────
+    public ?int    $pageCount      = null;
+    public bool    $debug          = false;
+    public string  $paginationItem = '<li><a class="page btn btn-outline-primary ms-1 fs-1 [active]" href="[url]">[text]</a></li>';
+
+    /** @var array<string> SQL reference dəyərləri (quote-lanmaz) */
+    public array $reference = ['NOW()'];
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Construct
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function __construct(
+        string $host,
+        string $dbname,
+        string $username,
+        string $password,
+        string $charset  = 'utf8mb4',
+        bool   $autolog  = false
+    ) {
+        try {
+            parent::__construct(
+                dsn: "mysql:host={$host};dbname={$dbname};charset={$charset}",
+                username: $username,
+                password: $password,
+                options: [
+                    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_EMULATE_PREPARES   => false,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset}",
+                ]
+            );
+
+            $this->dbName  = $dbname;
+            $this->autolog = $autolog;
+
+            if ($this->autolog) {
+                $this->createLogTable();
+            }
+        } catch (PDOException $e) {
+            throw $e;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // State idarəsi
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Sorğu state-ni tam sıfırla.
+     * Hər yeni from / insert / update / delete çağırışında avtomatik çalışır.
+     */
+    private function reset(): void
+    {
+        $this->type       = null;
+        $this->sql        = null;
+        $this->unionSql   = null;
+        $this->tableName  = null;
+        $this->where      = null;
+        $this->having     = null;
+        $this->grouped    = false;
+        $this->group_id   = null;
+        $this->join       = null;
+        $this->orderBy    = null;
+        $this->groupBy    = null;
+        $this->limit      = null;
+        $this->bindings   = [];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SELECT / FROM / clauses
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function from(string $tableName): static
+    {
+        $this->reset();
+        $this->sql       = "SELECT * FROM {$tableName}";
+        $this->tableName = $tableName;
+        return $this;
+    }
+
+    public function select(string $columns): static
+    {
+        $this->sql = str_replace(' * ', " {$columns} ", $this->sql ?? '');
+        return $this;
+    }
+
+    public function union(): static
+    {
+        $this->type     = 'union';
+        $this->unionSql = $this->sql;
+        return $this;
+    }
+
+    public function group(Closure $fn): static
+    {
+        static $group_id = 0;
+        $this->grouped = true;
+        $fn($this);
+        $this->group_id = ++$group_id;
+        $this->grouped  = false;
+        return $this;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // WHERE / HAVING
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function where(
+        string $column,
+        mixed  $value   = '',
+        string $mark    = '=',
+        string $logical = '&&'
+    ): static {
+        if ($column !== '') {
+            $this->where[] = [
+                'column'   => $column,
+                'value'    => $value,
+                'mark'     => $mark,
+                'logical'  => $logical,
+                'grouped'  => $this->grouped,
+                'group_id' => $this->group_id,
+            ];
+        }
+        return $this;
+    }
+
+    /** @param array<array> $wheres */
+    public function wheres(array $wheres = []): static
+    {
+        foreach ($wheres as $w) {
+            $this->where(
+                column:  $w[0],
+                value:   $w[1] ?? '',
+                mark:    $w[2] ?? '=',
+                logical: $w[3] ?? '&&'
+            );
+        }
+        return $this;
+    }
+
+    public function having(
+        string $column,
+        mixed  $value   = '',
+        string $mark    = '=',
+        string $logical = '&&'
+    ): static {
+        $this->having[] = [
+            'column'   => $column,
+            'value'    => $value,
+            'mark'     => $mark,
+            'logical'  => $logical,
+            'grouped'  => $this->grouped,
+            'group_id' => $this->group_id,
+        ];
+        return $this;
+    }
+
+    public function or_where(string $column, mixed $value, string $mark = '='): static
+    {
+        return $this->where($column, $value, $mark, '||');
+    }
+
+    public function or_having(string $column, mixed $value, string $mark = '='): static
+    {
+        return $this->having($column, $value, $mark, '||');
+    }
+
+    public function status(mixed $value = '', string $mark = '=', string $logical = '&&'): static
+    {
+        return $this->where('status', $value, $mark, $logical);
+    }
+
+    public function id(mixed $value = '', string $mark = '=', string $logical = '&&'): static
+    {
+        return $this->where('id', $value, $mark, $logical);
+    }
+
+    public function like(string $column, string $value): static
+    {
+        return $this->where($column, $value, 'LIKE');
+    }
+
+    public function notLike(string $column, string $value): static
+    {
+        return $this->where($column, $value, 'NOT LIKE');
+    }
+
+    public function between(string $column, array $values): static
+    {
+        return $this->where($column, $values, 'BETWEEN');
+    }
+
+    public function notBetween(string $column, array $values): static
+    {
+        return $this->where($column, $values, 'NOT BETWEEN');
+    }
+
+    public function findInSet(string $column, mixed $value): static
+    {
+        return $this->where($column, $value, 'FIND_IN_SET');
+    }
+
+    public function findInSetReverse(string $column, mixed $value): static
+    {
+        return $this->where($column, $value, 'FIND_IN_SET_REVERSE');
+    }
+
+    public function in(string $column, array|string $value): static
+    {
+        return $this->where($column, $value, 'IN');
+    }
+
+    public function notIn(string $column, array|string $value): static
+    {
+        return $this->where($column, $value, 'NOT IN');
+    }
+
+    public function soundex(string $column, string $value): static
+    {
+        return $this->where($column, $value, 'SOUNDEX');
+    }
+
+    public function custom_where(string $sql, mixed $value = 1): static
+    {
+        return $this->where($sql, $value, 'CUSTOM');
+    }
+
+    /**
+     * Azərbaycan hərfləri üçün transliterasiya ilə LIKE axtarışı.
+     */
+    public function az_like(string $table, string $column, string $value): static
+    {
+        $replaceChain = $this->buildAzReplaceChain("{$table}.{$column}");
+        $alias        = "{$column}_norm";
+
+        // SELECT hissəsinə transliterasiya sütununu əlavə et
+        if (preg_match('/SELECT\s+(.*?)\s+FROM/is', $this->sql ?? '', $m)) {
+            $cols = trim($m[1]);
+            if ($cols === '*' || $cols === "{$this->tableName}.*") {
+                $cols = "{$table}.*";
+            }
+            if (stripos($cols, $alias) === false) {
+                $this->sql = preg_replace(
+                    '/SELECT\s+(.*?)\s+FROM/is',
+                    "SELECT {$cols}, {$replaceChain} AS {$alias} FROM",
+                    $this->sql,
+                    1
+                );
+            }
+        } else {
+            $this->sql = "SELECT {$table}.*, {$replaceChain} AS {$alias} FROM {$this->tableName}";
+        }
+
+        // Binding ilə güvənli WHERE
+        $bindKey              = $this->uniqueKey('az_like');
+        $this->bindings[$bindKey] = "%{$value}%";
+
+        $whereSql = "({$table}.{$column} LIKE {$bindKey} OR {$replaceChain} LIKE {$bindKey})";
+        return $this->custom_where($whereSql);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // JOIN
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function join(string $targetTable, string $joinSql, string $joinType = 'inner'): static
+    {
+        $type           = strtoupper($joinType);
+        $formatted      = sprintf($joinSql, $targetTable, $this->tableName);
+        $this->join[]   = " {$type} JOIN {$targetTable} ON {$formatted}";
+        return $this;
+    }
+
+    public function leftJoin(string $targetTable, string $joinSql): static
+    {
+        return $this->join($targetTable, $joinSql, 'left');
+    }
+
+    public function rightJoin(string $targetTable, string $joinSql): static
+    {
+        return $this->join($targetTable, $joinSql, 'right');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ORDER / GROUP / LIMIT
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function orderBy(string $columnName, string $sort = 'ASC'): static
+    {
+        $this->orderBy = " ORDER BY {$columnName} " . strtoupper($sort);
+        return $this;
+    }
+
+    public function orderByRand(): static
+    {
+        $this->orderBy = ' ORDER BY RAND()';
+        return $this;
+    }
+
+    public function dual_orderby(
+        string $col1,
+        string $col2,
+        string $sort1 = 'ASC',
+        string $sort2 = 'ASC'
+    ): static {
+        $this->orderBy = ' ORDER BY ' . $col1 . ' ' . strtoupper($sort1)
+            . ', ' . $col2 . ' ' . strtoupper($sort2);
+        return $this;
+    }
+
+    public function custom_orderby(string $sql): static
+    {
+        $this->orderBy = " {$sql}";
+        return $this;
+    }
+
+    public function groupBy(string $columnName): static
+    {
+        $this->groupBy = " GROUP BY {$columnName}";
+        return $this;
+    }
+
+    public function limit(int $start, int $limit): static
+    {
+        $this->limit = " LIMIT {$start},{$limit}";
+        return $this;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Fetch
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** @return array<array<string, mixed>> */
+    public function all(): array
+    {
+        try {
+            $stmt = $this->generateQuery();
+            return $stmt?->fetchAll(PDO::FETCH_ASSOC) ?? [];
+        } catch (PDOException $e) {
+            $this->showError($e);
+        }
+    }
+
+    /** @return array<string, mixed>|null */
+    public function first(): ?array
+    {
+        try {
+            $stmt   = $this->generateQuery();
+            $result = $stmt?->fetch(PDO::FETCH_ASSOC);
+            return $result ?: null;
+        } catch (PDOException $e) {
+            $this->showError($e);
+        }
+    }
+
+    public function generateQuery(): ?PDOStatement
+    {
+        $this->applyJoins();
+        $this->get_where('where');
+
+        if ($this->groupBy) {
+            $this->sql    .= $this->groupBy;
+            $this->groupBy = null;
+        }
+
+        $this->get_where('having');
+
+        if ($this->orderBy) {
+            $this->sql    .= $this->orderBy;
+            $this->orderBy = null;
+        }
+
+        if ($this->limit) {
+            $this->sql   .= $this->limit;
+            $this->limit  = null;
+        }
+
+        if ($this->type === 'union') {
+            $this->sql = "{$this->unionSql} UNION ALL {$this->sql}";
+        }
+
+        if ($this->debug) {
+            $this->dumpDebug();
+        }
+
+        $this->type = null;
+
+        $stmt = $this->prepare($this->sql);
+        $stmt->execute($this->bindings);
+        $this->bindings = [];
+
+        return $stmt;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // INSERT / UPDATE / DELETE / DONE
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function insert(string $tableName): static
+    {
+        $this->reset();
+        $this->sql               = "INSERT INTO {$tableName}";
+        $this->tableName         = $tableName;
+        $this->autolog_tableName = $tableName;
+        $this->autolog_type      = 'insert';
+        return $this;
+    }
+
+    public function update(string $tableName): static
+    {
+        $this->reset();
+        $this->sql               = "UPDATE {$tableName}";
+        $this->tableName         = $tableName;
+        $this->autolog_tableName = $tableName;
+        $this->autolog_type      = 'update';
+        return $this;
+    }
+
+    public function delete(string $tableName): static
+    {
+        $this->reset();
+        $this->sql               = "DELETE FROM {$tableName}";
+        $this->tableName         = $tableName;
+        $this->autolog_tableName = $tableName;
+        $this->autolog_type      = 'delete';
+        return $this;
+    }
+
+    /**
+     * INSERT / UPDATE üçün SET
+     */
+    public function set(array|string $data, mixed $value = null): bool
+    {
+        try {
+            // ── Tək sütun + dəyər ──
+            if (is_string($data) && $value !== null) {
+                $strValue = (string) $value;
+
+                if (str_contains($strValue, '+') || str_contains($strValue, '-')) {
+                    // Riyazi artırma/azaltma — binding yoxdur (dəyər operator kimi işlədilir)
+                    $this->sql .= " SET {$data} = {$data} {$strValue}";
+                } else {
+                    $key                    = $this->uniqueKey($data);
+                    $this->sql             .= " SET {$data} = {$key}";
+                    $this->bindings[$key]   = $value;
+                }
+                // ── Çoxlu sütun (array) ──
+            } elseif (is_array($data)) {
+                $sets = [];
+                foreach ($data as $col => $val) {
+                    $key                   = $this->uniqueKey($col);
+                    $sets[]                = "{$col} = {$key}";
+                    $this->bindings[$key]  = $val;
+                }
+                $this->sql .= ' SET ' . implode(', ', $sets);
+            } else {
+                throw new InvalidArgumentException(
+                    'set() expects an array or a string column name with a value.'
+                );
+            }
+
+            $this->get_where('where');
+            $this->get_where('having');
+
+            // Autolog məlumatlarını set() əvvəlindən saxla
+            $logTable   = $this->autolog_tableName;
+            $logType    = $this->autolog_type;
+            $logContent = is_array($data) ? $data : [$data => $value];
+
+            $stmt   = $this->prepare($this->sql);
+            $result = $stmt->execute($this->bindings);
+            $this->bindings = [];
+
+            if ($logType === 'insert') {
+                $this->lastInsertedId = (int) parent::lastInsertId();
+            }
+
+            $this->logAction($logTable, $logType, $logContent);
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->showError($e);
+        }
+    }
+
+    /**
+     * Sütun dəyərini artır / azalt
+     */
+    public function incrementDecrement(string $column, string $value = '+ 1'): bool
+    {
+        try {
+            $this->sql .= " SET {$column} = {$column} {$value}";
+
+            $this->get_where('where');
+            $this->get_where('having');
+
+            $stmt   = $this->prepare($this->sql);
+            $result = $stmt->execute($this->bindings);
+            $this->bindings = [];
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->showError($e);
+        }
+    }
+
+    /**
+     * DELETE / WHERE-siz UPDATE icra et
+     */
+    public function done(): int|false
+    {
+        try {
+            $this->get_where('where');
+            $this->get_where('having');
+
+            $logTable = $this->autolog_tableName;
+            $logType  = $this->autolog_type;
+            $logSql   = $this->sql;
+
+            $stmt   = $this->prepare($this->sql);
+            $stmt->execute($this->bindings);
+            $this->bindings = [];
+
+            $this->logAction($logTable, $logType ?? 'delete', ['sql' => $logSql]);
+
+            return $stmt->rowCount();
+        } catch (PDOException $e) {
+            $this->showError($e);
+        }
+    }
+
+    public function lastId(): int
+    {
+        if ($this->lastInsertedId !== null) {
+            $id                   = $this->lastInsertedId;
+            $this->lastInsertedId = null;
+            return $id;
+        }
+        return (int) parent::lastInsertId();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Aggregate
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function total(): int
+    {
+        $this->applyJoins();
+        $this->get_where('where');
+
+        if ($this->groupBy) {
+            $this->sql    .= $this->groupBy;
+            $this->groupBy = null;
+        }
+
+        $this->get_where('having');
+
+        if ($this->orderBy) {
+            $this->sql    .= $this->orderBy;
+            $this->orderBy = null;
+        }
+
+        if ($this->limit) {
+            $this->sql   .= $this->limit;
+            $this->limit  = null;
+        }
+
+        $stmt = $this->prepare($this->sql);
+        $stmt->execute($this->bindings);
+        $this->bindings = [];
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return (int) ($row['total'] ?? 0);
+    }
+
+    public function count(string $column = 'id'): int
+    {
+        $this->select("COUNT({$this->tableName}.{$column}) as total");
+        return $this->total();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pagination
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * @return array{start: int, limit: int}
+     */
+    public function pagination(int $totalRecord, int $paginationLimit, int $page): array
+    {
+        $page = max(1, $page); // mənfi / sıfır qorunması
+
+        $this->paginationLimit = $paginationLimit;
+        $this->page            = $page;
+        $this->totalRecord     = $totalRecord;
+        $this->pageCount       = (int) ceil($totalRecord / $paginationLimit);
+
+        $start = ($page - 1) * $paginationLimit;
+
+        return ['start' => $start, 'limit' => $paginationLimit];
+    }
+
+    public function showPagination(string $url, string $class = 'active'): ?string
+    {
+        if ($this->totalRecord === null || $this->paginationLimit === null) {
+            return null;
+        }
+
+        if ($this->totalRecord <= $this->paginationLimit) {
+            return null;
+        }
+
+        $this->html = '';
+
+        for ($i = $this->page - 5; $i <= $this->page + 5; $i++) {
+            if ($i > 0 && $i <= $this->pageCount) {
+                $activeClass = ($i === $this->page) ? $class : '';
+                $pageUrl     = str_replace('{{page}}', (string) $i, $url);
+
+                $this->html .= str_replace(
+                    ['[active]', '[text]', '[url]'],
+                    [$activeClass, (string) $i, $pageUrl],
+                    $this->paginationItem
+                );
+            }
+        }
+
+        return $this->html;
+    }
+
+    public function nextPage(): int
+    {
+        return ($this->page + 1 < ($this->pageCount ?? 1))
+            ? $this->page + 1
+            : ($this->pageCount ?? 1);
+    }
+
+    public function prevPage(): int
+    {
+        return ($this->page - 1 > 0) ? $this->page - 1 : 1;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Debug / SQL
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function getSqlString(): string
+    {
+        $this->get_where('where');
+        $this->get_where('having');
+        return $this->renderError($this->sql ?? '', self::class . ' SQL Sorgusu');
+    }
+
+    public function getSql(): ?string
+    {
+        return $this->sql;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Utility
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function truncate(string $tableName): PDOStatement|false
+    {
+        return $this->query("TRUNCATE TABLE `{$this->dbName}`.`{$tableName}`");
+    }
+
+    /** @param array<string> $dbs */
+    public function truncateAll(array $dbs = []): void
+    {
+        if (empty($dbs)) {
+            $dbs[] = $this->dbName;
+        }
+
+        $rows = $this->from('INFORMATION_SCHEMA.TABLES')
+            ->select('CONCAT("TRUNCATE TABLE `", table_schema, "`.`", TABLE_NAME, "`;") as q, TABLE_NAME as t')
+            ->in('table_schema', implode(',', $dbs))
+            ->all();
+
+        $this->query('SET FOREIGN_KEY_CHECKS=0;');
+        foreach ($rows as $row) {
+            $this->setAutoIncrement($row['t']);
+            $this->query($row['q']);
+        }
+        $this->query('SET FOREIGN_KEY_CHECKS=1;');
+    }
+
+    public function setAutoIncrement(string $tableName, int $ai = 1): PDOStatement|false
+    {
+        return $this->query("ALTER TABLE `{$tableName}` AUTO_INCREMENT = {$ai}");
+    }
+
+    /**
+     * @param array<array> $where
+     */
+    public function setWhereSql(array $where = []): string
+    {
+        if (empty($where)) {
+            return 'id > "-1"';
+        }
+
+        $parts   = [];
+        $lastKey = array_key_last($where);
+
+        foreach ($where as $key => $w) {
+            $operator = $w[2] ?? '=';
+            $logical  = $w[3] ?? '&&';
+            $sql      = "{$w[0]} {$operator} \"{$w[1]}\"";
+            $parts[]  = ($key === $lastKey) ? $sql : "{$sql} {$logical}";
+        }
+
+        return implode(' ', $parts);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Magic
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function __call(string $name, array $args): never
+    {
+        throw new BadMethodCallException(
+            "Method '{$name}' not found in " . self::class
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * JOIN-ları SQL-ə əlavə et
+     */
+    private function applyJoins(): void
+    {
+        if ($this->join) {
+            $this->sql .= implode(' ', $this->join);
+            $this->join = null;
+        }
+    }
+
+    /**
+     * WHERE / HAVING clause-larını binding ilə qur
+     */
+    private function get_where(string $conditionType = 'where'): void
+    {
+        $conditions = $this->{$conditionType};
+
+        if (!is_array($conditions) || count($conditions) === 0) {
+            return;
+        }
+
+        $keyword     = ($conditionType === 'having') ? 'HAVING' : 'WHERE';
+        $whereClause = " {$keyword} ";
+
+        foreach ($conditions as $key => $item) {
+
+            // ── Qrup açılışı ──────────────────────────────────────────────
+            if (
+                $item['grouped'] === true &&
+                (
+                    !isset($conditions[$key - 1]) ||
+                    $conditions[$key - 1]['grouped'] !== true ||
+                    $conditions[$key - 1]['group_id'] !== $item['group_id']
+                )
+            ) {
+                $prefix      = (isset($conditions[$key - 1]) && $conditions[$key - 1]['grouped'] === true)
+                    ? " {$item['logical']}"
+                    : '';
+                $whereClause .= "{$prefix} (";
+            }
+
+            // ── Şərt qurulması ────────────────────────────────────────────
+            $where = $this->buildCondition($item);
+
+            // ── Clause-a əlavə et ─────────────────────────────────────────
+            if ($key === 0) {
+                $nextGrouped = ($conditions[$key + 1]['grouped'] ?? false) === true;
+                $whereClause .= ($item['grouped'] === false && $nextGrouped)
+                    ? "{$where} {$item['logical']}"
+                    : $where;
+            } else {
+                $whereClause .= " {$item['logical']} {$where}";
+            }
+
+            // ── Qrup bağlanması ───────────────────────────────────────────
+            if (
+                $item['grouped'] === true &&
+                (
+                    !isset($conditions[$key + 1]) ||
+                    $conditions[$key + 1]['grouped'] !== true ||
+                    $conditions[$key + 1]['group_id'] !== $item['group_id']
+                )
+            ) {
+                $whereClause .= ' )';
+            }
+        }
+
+        // Artıq qalan məntiqi operatorları təmizlə
+        $whereClause = rtrim($whereClause, '|');
+        $whereClause = rtrim($whereClause, '&');
+        $whereClause = (string) preg_replace('/\(\s+(\|\||&&)/', '(', $whereClause);
+        $whereClause = (string) preg_replace('/(\|\||&&)\s+\)/', ')', $whereClause);
+
+        $this->sql .= $whereClause;
+
+        if ($this->unionSql !== null) {
+            $this->unionSql .= $whereClause;
+        }
+
+        $this->{$conditionType} = null;
+    }
+
+    /**
+     * Tək şərt parçasını PDO binding ilə qur
+     */
+    private function buildCondition(array $item): string
+    {
+        $col = $item['column'];
+        $val = $item['value'];
+
+        switch ($item['mark']) {
+
+            case 'LIKE':
+                $k = $this->uniqueKey('like');
+                $this->bindings[$k] = "%{$val}%";
+                return "{$col} LIKE {$k}";
+
+            case 'NOT LIKE':
+                $k = $this->uniqueKey('nlike');
+                $this->bindings[$k] = "%{$val}%";
+                return "{$col} NOT LIKE {$k}";
+
+            case 'BETWEEN':
+                $k1 = $this->uniqueKey('btw0');
+                $k2 = $this->uniqueKey('btw1');
+                $this->bindings[$k1] = $val[0];
+                $this->bindings[$k2] = $val[1];
+                return "{$col} BETWEEN {$k1} AND {$k2}";
+
+            case 'NOT BETWEEN':
+                $k1 = $this->uniqueKey('nbtw0');
+                $k2 = $this->uniqueKey('nbtw1');
+                $this->bindings[$k1] = $val[0];
+                $this->bindings[$k2] = $val[1];
+                return "{$col} NOT BETWEEN {$k1} AND {$k2}";
+
+            case 'FIND_IN_SET':
+                // val sütun adıdır — binding-siz saxlanır
+                return "FIND_IN_SET({$col}, {$val})";
+
+            case 'FIND_IN_SET_REVERSE':
+                return "FIND_IN_SET({$val}, {$col})";
+
+            case 'IN':
+                return $this->buildInCondition($col, $val, false);
+
+            case 'NOT IN':
+                return $this->buildInCondition($col, $val, true);
+
+            case 'SOUNDEX':
+                $k = $this->uniqueKey('sdx');
+                $this->bindings[$k] = $val;
+                return "SOUNDEX({$col}) LIKE CONCAT('%', TRIM(TRAILING '0' FROM SOUNDEX({$k})), '%')";
+
+            case 'CUSTOM':
+                // Ham SQL — binding-lər az_like / xarici tərəfdən əlavə edilib
+                return $col;
+
+            default:
+                return $this->buildDefaultCondition($item);
+        }
+    }
+
+    /**
+     * IN / NOT IN üçün binding
+     */
+    private function buildInCondition(string $column, array|string $value, bool $not): string
+    {
+        if (is_array($value)) {
+            $keys = [];
+            foreach ($value as $v) {
+                $k                    = $this->uniqueKey('in');
+                $this->bindings[$k]   = $v;
+                $keys[]               = $k;
+            }
+            $placeholder = implode(', ', $keys);
+        } else {
+            // Vergüllə ayrılmış string olduqda olduğu kimi istifadə edilir
+            $placeholder = $value;
+        }
+
+        $notStr = $not ? ' NOT' : '';
+        return "{$column}{$notStr} IN({$placeholder})";
+    }
+
+    /**
+     * Default = / < / > kimi operatorlar üçün şərt qur
+     */
+    private function buildDefaultCondition(array $item): string
+    {
+        $col = $item['column'];
+        $val = (string) $item['value'];
+        $op  = $item['mark'];
+
+        // reference dəyərləri (məs. NOW()) birbaşa SQL-ə yazılır
+        $isRef = !empty(preg_grep('/' . preg_quote($val, '/') . '/i', $this->reference));
+
+        if ($isRef) {
+            return "{$col} {$op} {$val}";
+        }
+
+        $k                    = $this->uniqueKey('val');
+        $this->bindings[$k]   = $item['value'];
+        return "{$col} {$op} {$k}";
+    }
+
+    /**
+     * Təkrarlanmaz binding açarı yarat
+     */
+    private function uniqueKey(string $prefix): string
+    {
+        return ':' . $prefix . '_' . count($this->bindings) . '_' . uniqid();
+    }
+
+    /**
+     * az_like üçün REPLACE zənciri
+     */
+    private function buildAzReplaceChain(string $expr): string
+    {
+        $map = [
+            'ə' => 'e', 'ö' => 'o', 'ü' => 'u',
+            'ç' => 'c', 'ş' => 's', 'ğ' => 'g',
+            'ı' => 'i', 'Ə' => 'e',
+        ];
+
+        $chain = $expr;
+        foreach ($map as $from => $to) {
+            $chain = "REPLACE({$chain}, '{$from}', '{$to}')";
+        }
+
+        return $chain;
+    }
+
+    /**
+     * Debug üçün SQL + binding-ləri göstər
+     */
+    private function dumpDebug(): void
+    {
+        $interpolated = $this->sql;
+        foreach ($this->bindings as $k => $v) {
+            $interpolated = str_replace($k, "'" . addslashes((string) $v) . "'", $interpolated);
+        }
+        $this->renderError($interpolated, self::class . ' DEBUG SQL');
+    }
+
+    /**
+     * Xəta mesajını göstər və exception at
+     *
+     * @throws PDOException
+     */
+    private function showError(PDOException $error): never
+    {
+        $this->renderError($error->getMessage());
+        throw $error;
+    }
+
+    /**
+     * Xəta / debug HTML şablonu
+     */
+    private function renderError(string $msg, ?string $title = null): string
+    {
+        $displayTitle = htmlspecialchars($title ?? self::class . ' Xətası:');
+        $displayMsg   = htmlspecialchars($msg);
+
+        $html = <<<HTML
+<div class="db-error-msg-content">
+    <div class="db-error-title">{$displayTitle}</div>
+    <div class="db-error-msg">{$displayMsg}</div>
+</div>
+<style>
+.db-error-msg-content{padding:15px;border-left:5px solid #c00000;background:#f8f8f8;margin-bottom:10px}
+.db-error-title{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:16px;font-weight:500}
+.db-error-msg{margin-top:15px;font-size:14px;font-family:Consolas,Monaco,Menlo,monospace;color:#c00000;white-space:pre-wrap}
+</style>
+HTML;
+
+        echo $html;
+        return $html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Autolog
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private function logAction(?string $table, ?string $type, mixed $content): void
+    {
+        // State-i mümkün qədər tez sıfırla
+        $this->autolog_type      = null;
+        $this->autolog_tableName = null;
+
+        if (!$this->autolog || !$table || !$type) {
+            return;
+        }
+
+        try {
+            $stmt = $this->prepare(
+                'INSERT INTO logs (`table_name`, `type`, `content`, `created_at`)
+                 VALUES (:table, :type, :content, NOW())'
+            );
+            $stmt->execute([
+                ':table'   => $table,
+                ':type'    => $type,
+                ':content' => json_encode($content, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            ]);
+        } catch (PDOException|\JsonException $e) {
+            error_log('Database log error: ' . $e->getMessage());
+        }
+    }
+
+    private function createLogTable(): void
+    {
+        $this->exec("
+            CREATE TABLE IF NOT EXISTS logs (
+                id         INT(11) UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                table_name VARCHAR(255)  NOT NULL,
+                type       VARCHAR(50)   NOT NULL,
+                content    JSON,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_table_name (table_name),
+                INDEX idx_type       (type),
+                INDEX idx_created_at (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    }
+}

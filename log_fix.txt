@@ -1,0 +1,134 @@
+Log Mantığındakı Xətanın Həlli
+Düzgün müşahidə etmisən! logAction() metodu set() daxilində çağırıldığı üçün lastInsertId() log cədvəlinin ID-sini qaytarır, əsl insert edilən cədvəlin ID-sini yox.
+
+Həll Yolu
+lastInsertId()-ni log yazmadan əvvəl saxlamaq lazımdır:
+
+PHP
+
+<?php
+namespace Webservis;
+
+class Database extends \PDO
+{
+    // ... mövcud property-lər ...
+    
+    private $lastInsertedId = null; // YENİ: Son insert ID-ni saxlamaq üçün
+
+    // ... konstruktor və digər metodlar eyni qalır ...
+
+    public function set($data, $value = null)
+    {
+        try {
+            if ($value) {
+                if (strstr($value, '+')) {
+                    $this->sql .= ' SET ' . $data . ' = ' . $data . ' ' . $value;
+                    $executeValue = null;
+                } elseif (strstr($value, '-')) {
+                    $this->sql .= ' SET ' . $data . ' = ' . $data . ' ' . $value;
+                    $executeValue = null;
+                } else {
+                    $this->sql .= ' SET ' . $data . ' = :' . $data . '';
+                    $executeValue = [
+                        $data => $value
+                    ];
+                }
+            } else {
+                $this->sql .= ' SET ' . implode(', ', array_map(function ($item) {
+                        return $item . ' = :' . $item;
+                    }, array_keys($data)));
+                $executeValue = $data;
+            }
+            
+            $this->get_where('where');
+            $this->get_where('having');
+            $query = $this->prepare($this->sql);
+            $result = $query->execute($executeValue);
+
+            // ✅ DÜZƏLDILMIŞ: Əvvəlcə lastInsertId-ni saxla, sonra log yaz
+            if ($this->autolog_type === 'insert') {
+                $this->lastInsertedId = parent::lastInsertId();
+            }
+
+            // İndi log yaza bilərik
+            $this->logAction($this->autolog_tableName, $this->autolog_type, $data);
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->showError($e);
+        }
+    }
+
+    /**
+     * ✅ DÜZƏLDILMIŞ: Əsl insert ID-ni qaytarır
+     */
+    public function lastId()
+    {
+        if ($this->lastInsertedId !== null) {
+            $id = $this->lastInsertedId;
+            $this->lastInsertedId = null; // Bir dəfə istifadə olunduqdan sonra sıfırla
+            return $id;
+        }
+        return parent::lastInsertId();
+    }
+
+    public function done()
+    {
+        try {
+            $this->get_where('where');
+            $this->get_where('having');
+            
+            // ✅ DÜZƏLDILMIŞ: Log üçün düzgün table adı
+            $logTableName = $this->autolog_tableName;
+            
+            $query = $this->exec($this->sql);
+            
+            $this->logAction($logTableName, 'delete', ['sql' => $this->sql]);
+            
+            return $query;
+        } catch (PDOException $e) {
+            $this->showError($e);
+        }
+    }
+
+    private function logAction($table, $type, $content)
+    {
+        if ($this->autolog && $table) {
+            try {
+                $stmt = $this->prepare("INSERT INTO logs (`table_name`, `type`, `content`, `created_at`) VALUES (:table, :type, :content, NOW())");
+                $stmt->execute([
+                    ':table' => $table,
+                    ':type' => $type,
+                    ':content' => json_encode($content, JSON_UNESCAPED_UNICODE)
+                ]);
+            } catch (\PDOException $e) {
+                // Log xətası əsas əməliyyatı dayandırmasın
+                error_log("Log error: " . $e->getMessage());
+            }
+            
+            // ✅ Logdan sonra bu dəyərləri sıfırla
+            $this->autolog_type = null;
+            $this->autolog_tableName = null;
+        }
+    }
+
+    // ... qalan metodlar eyni qalır ...
+}
+Əsas Dəyişikliklər:
+Əvvəl	Sonra
+lastInsertId() log-dan sonra çağırılırdı	Insert ID log-dan əvvəl saxlanılır
+lastId() birbaşa lastInsertId() qaytarırdı	Saxlanılmış ID qaytarılır
+Log xətası proqramı dayandırırdı	try-catch ilə təhlükəsiz log
+İstifadə Nümunəsi:
+PHP
+
+$db->insert('users')->set([
+    'name' => 'Test',
+    'email' => 'test@test.com'
+]);
+
+$userId = $db->lastId(); // ✅ İndi düzgün users.id qaytarır, logs.id yox
+
+
+
+

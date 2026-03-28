@@ -70,6 +70,14 @@ if ($deleteResult) {
     echo "An error occurred while deleting the user.<br>";
 }
 
+// Example of count function
+$total = $db->from('users')->count();
+$activeUsers = $db->from('users')
+    ->where('status', 1)
+    ->count();
+
+echo "Total active users: " . $activeUsers;
+
 // Since autolog is enabled, all INSERT, UPDATE, and DELETE operations are logged automatically.
 // Please replace 'your_database_name', 'your_username', and 'your_password' with your actual database name, username, and password. Additionally, customize the table names and column names based on your project.
 ?>

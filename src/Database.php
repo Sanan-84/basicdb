@@ -38,7 +38,7 @@ class Database extends \PDO
     private $autolog = false;
     private $autolog_type = null;
     private $autolog_tableName = null;
-
+    private $lastInsertedId = null;
 
     public function __construct($host, $dbname, $username, $password, $charset = 'utf8', $autolog = false)
     {
@@ -395,7 +395,12 @@ class Database extends \PDO
             $query = $this->prepare($this->sql);
             $result = $query->execute($executeValue);
 
-            $this->logAction($this->tableName, $this->autolog_type, $data);
+            if ($this->autolog_type === 'insert') {
+                $this->lastInsertedId = parent::lastInsertId();
+            }
+
+            $this->logAction($this->autolog_tableName, $this->autolog_type, $data);
+
 
             return $result;
         } catch (PDOException $e) {
@@ -425,7 +430,12 @@ class Database extends \PDO
 
     public function lastId()
     {
-        return $this->lastInsertId();
+        if ($this->lastInsertedId !== null) {
+            $id = $this->lastInsertedId;
+            $this->lastInsertedId = null; // Bir dəfə istifadə olunduqdan sonra sıfırla
+            return $id;
+        }
+        return parent::lastInsertId();
     }
 
     public function update($tableName)
@@ -449,8 +459,11 @@ class Database extends \PDO
         try {
             $this->get_where('where');
             $this->get_where('having');
+
+            $logTableName = $this->autolog_tableName;
+
             $query = $this->exec($this->sql);
-            $this->logAction($this->tableName, 'delete', ['sql' => $this->sql]);
+            $this->logAction($logTableName, 'delete', ['sql' => $this->sql]);
             return $query;
         } catch (PDOException $e) {
             $this->showError($e);
@@ -758,13 +771,22 @@ class Database extends \PDO
     }
     private function logAction($table, $type, $content)
     {
-        if ($this->autolog) {
-            $stmt = $this->prepare("INSERT INTO logs (`table_name`, `type`, `content`, `created_at`) VALUES (:table, :type, :content, NOW())");
-            $stmt->execute([
-                ':table' => $table,
-                ':type' => $type,
-                ':content' => json_encode($content)
-            ]);
+        if ($this->autolog && $table) {
+            try {
+                $stmt = $this->prepare("INSERT INTO logs (`table_name`, `type`, `content`, `created_at`) VALUES (:table, :type, :content, NOW())");
+                $stmt->execute([
+                        ':table' => $table,
+                        ':type' => $type,
+                        ':content' => json_encode($content, JSON_UNESCAPED_UNICODE)
+                ]);
+            } catch (\PDOException $e) {
+                // Log xətası əsas əməliyyatı dayandırmasın
+                error_log("Log error: " . $e->getMessage());
+            }
+
+            // ✅ Logdan sonra bu dəyərləri sıfırla
+            $this->autolog_type = null;
+            $this->autolog_tableName = null;
         }
     }
 
